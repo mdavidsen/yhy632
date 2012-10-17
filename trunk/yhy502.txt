@@ -1,0 +1,11 @@
+connected pins
+fm1702SL  -> atmega8l
+type name N -> N name type
+
+O IRQ            2   ->  1  INT1 PD3 
+I reset         23 -> 32  PD2 INT0
+O MISO          12 -> 24 PC1 ADC1
+I SCK (clock)   13 -> 25  PC2 ADC2
+I MOSI          14  -> 23 PC0 ADC0
+I NSS           15 -> 26 PC3
+I low           16  -> 21 GND
