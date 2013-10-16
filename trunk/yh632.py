@@ -2,7 +2,10 @@
 import datetime
 import os,sys,struct,serial
 HEADER = '\xAA\xBB'
-RESERVED = '\x00\x00'
+
+RESERVED = '\xFF\xFF' # actually 00 00 according to the reference.
+                      # However, YHY632 seems to accept anything here and
+                      # new YHY523U module requires FF FF
 
 
 CMD_SET_BAUDRATE = 0x0101
@@ -12,13 +15,13 @@ CMD_READ_NODE_NUMBER = 0x0103
 CMD_READ_FW_VERSION = 0x0104
 CMD_BEEP = 0x0106
 CMD_LED = 0x0107
-CMD_WORKING_STATUS = 0x0108 # not used?         # data = 0x41    
+CMD_WORKING_STATUS = 0x0108 # not used?         # data = 0x41
 
 CMD_ANTENNA_POWER = 0x010C
 CMD_RFU = 0x0108
 
-CMD_MIFARE_REQUEST = 0x0201 #  request a type of card 
-                            # 0x52: request all Type A card In field, 
+CMD_MIFARE_REQUEST = 0x0201 #  request a type of card
+                            # 0x52: request all Type A card In field,
                             # 0x26: request idle card
 
 TYPE_MIFARE_UL = 0x4400
@@ -32,11 +35,11 @@ CMD_MIFARE_ANTICOLISION = 0x0202 # 0x04 -> <NUL> (00)      [4cd90080]-cardnumber
 CMD_MIFARE_SELECT = 0x0203 #  [4cd90080]  -> 0008
 CMD_MIFARE_HALT = 0x0204
 
- 
-CMD_MIFARE_AUTH2 = 0x0207 # 60 [sector*4] [key]
-#Auth_mode:		Authenticate mode, 0x60: KEY A, 0x61: KEY B
 
-CMD_MIFARE_READ_BLOCK = 0x0208 # [block_number] 
+CMD_MIFARE_AUTH2 = 0x0207 # 60 [sector*4] [key]
+#Auth_mode:     Authenticate mode, 0x60: KEY A, 0x61: KEY B
+
+CMD_MIFARE_READ_BLOCK = 0x0208 # [block_number]
 
 CMD_MIFARE_UL_SELECT = 0x0212
 
@@ -44,48 +47,50 @@ class NoCardException(Exception):
     def __str__(self):
         return "No card in field"
 
-class YH632:
+class YHY632(object):
+	""" Serial API implementation for Ehuoyan YHY632 and YHY532U readers """
+
     def __init__(self, port = '/dev/ttyUSB0', baudrate = 115200):
         self.port = port
         self.baudrate = baudrate
         self.ser = serial.Serial(self.port,baudrate = self.baudrate)
-    
-            
-            
+
+
+
     def prepare_command(self,command, data):
-        length = 2+ 2 + 1 + len(data)  
-            
-        
-        body_raw = RESERVED + struct.pack('<H',command) + data 
+        length = 2+ 2 + 1 + len(data)
+
+
+        body_raw = RESERVED + struct.pack('<H',command) + data
         body = ''
         for b in body_raw:
             body += b
             if b == '\xAA':
                 body += '\x00'
-                
-        
-        
+
+
+
         body_int = map(ord, body)
         checksum = reduce( lambda x,y:  x^y,  body_int  )
-        
+
         return HEADER +  struct.pack('<H',length) + body + struct.pack('B',checksum)
-        
+
 
     def get_n_bytes(self,n, handle_AA = False):
-                
-            
+
+
         buffer = ''
         while 1:
             recieved = self.ser.read()
             if handle_AA:
                 if recieved.find('\xAA\x00') >= 0:
                     recieved = recieved.replace('\xAA\x00','\xAA')
-                
+
                 if recieved[0] == '\x00' and buffer[-1] == '\xAA':
                     recieved = recieved[1:]
-            
+
             buffer += recieved
-            
+
             if len(buffer) >= n:
                 return buffer
 
@@ -99,8 +104,8 @@ class YH632:
 
     def recieve_data(self):
         buffer = ''
-        
-        # recieve junk 
+
+        # recieve junk
         prev_byte = '\x00'
         while 1:
             cur_byte = self.ser.read(1)
@@ -108,25 +113,25 @@ class YH632:
                 # header found, stop
                 break
             prev_byte  = cur_byte
-        
+
         length = struct.unpack('<H', self.get_n_bytes(2)) [0]
-        
+
         packet = self.get_n_bytes(length, True)
-        
+
         reserved, command = struct.unpack('<HH', packet[:4])
         data = packet[4:-1]
         checksum = ord(packet[-1])
-        
+
         #~ print self.tohex(packet[:-1])
-        
+
         packet_int = map(ord, packet[:-1])
         checksum_calc = reduce( lambda x,y:  x^y,  packet_int  )
-        
+
         if data[0] == '\x00':
             if checksum != checksum_calc:
                 raise Exception, "bad checksum"
-        
-        
+
+
         return command, data
 
     def send_recieve(self, cmd, data):
@@ -136,7 +141,7 @@ class YH632:
             raise Exception, "the command in answer is bad!"
         else:
             return ord(data_recieved[0]), data_recieved[1:]
-            
+
 
 
 
@@ -145,41 +150,41 @@ class YH632:
         for b in s:
             result += hex(ord(b))[2:].zfill(2)
         return result[:count]
-        
+
 
     def readSocialCardName(self):
         keyA = '\xA0\xA1\xA2\xA3\xA4\xA5'
         sector = self.readSector( 13, keyA) + self.readSector( 14, keyA)
         sector15 = self.readSector( 15, keyA)
-        
+
         last_name = sector[1:34].decode('cp1251').strip()
         sex = sector[36]
-        
+
         birthday_str = sector[39:39+8]
         birthday = datetime.date( int(birthday_str[:4]),  int(birthday_str[4:6]),  int(birthday_str[6:8]))
 
         first_name = sector[49:49+46].strip().decode('cp1251').strip()
-        
+
         card_number = self.decode_bcd(sector15[1:11],19)
         card_series = self.decode_bcd(sector15[11:15],8)
-        
+
         return last_name,first_name,sex,birthday,card_number,card_series
         #~ return  sector_13.decode('cp1251')
-        
-        
 
 
-        
+
+
+
     def select(self):
         status, cardtype = self.send_recieve( CMD_MIFARE_REQUEST, '\x52') # card_type?
         if status != 0:
             raise NoCardException
-            
+
         status, serial = self.send_recieve( CMD_MIFARE_ANTICOLISION, '\x04')
         if status != 0:
             raise Exception, "Error in anticollision"
-            
-            
+
+
         cardtype = struct.unpack('>H',cardtype)[0]
         if cardtype == TYPE_MIFARE_UL:
             status, serial = self.send_recieve(  CMD_MIFARE_UL_SELECT, '')
@@ -187,18 +192,18 @@ class YH632:
             self.send_recieve(  CMD_MIFARE_SELECT, serial)
 
         return cardtype, serial
-        
+
     def halt(self):
-        status, data = self.send_recieve( CMD_MIFARE_HALT, '') 
+        status, data = self.send_recieve( CMD_MIFARE_HALT, '')
         return status,data
-        
+
     def readSector(self, sector = 0, keyA = '\xff'*5, blocks = (0,1,2,)):
         #~ self.select()
         self.send_recieve( CMD_MIFARE_AUTH2, '\x60' + chr( sector * 4) + keyA)
         results = ''
-        
 
-            
+
+
         for block in blocks:
             status, ans = self.send_recieve( CMD_MIFARE_READ_BLOCK, chr( sector * 4 + block))
             if status != 0 :
@@ -208,7 +213,7 @@ class YH632:
 
     def dump(self, keyA = '\xff'*6):
         for sector in xrange(0,16):
-        
+
             print "sector %d"%sector
             device.select()
             try:
@@ -216,10 +221,10 @@ class YH632:
             except:
                 pass
                 #traceback.print_exc()
-                
-        
-        
-        
+
+
+
+
 
     def getFWVersion(self):
         status, data = self.send_recieve( CMD_READ_FW_VERSION, '')
@@ -269,13 +274,13 @@ class YH632:
             data = '\x01'
         return  self.send_recieve( CMD_SET_BAUDRATE , data)[0] == 0
 
-        
+
 
 
 def toMatrixIIISerial(ctype, serial):
     tohex =  lambda serial: ''.join([hex(ord(c))[2:].zfill(2).upper() for c in serial])
     #~ type_str = ''
-    #~ 
+    #~
     #~ if ctype == TYPE_MIFARE_1K:
         #~ type_str = '1K (0004,08)'
     #~ elif ctype == TYPE_MIFARE_4K:
@@ -284,19 +289,19 @@ def toMatrixIIISerial(ctype, serial):
         #~ type_str = 'UL (0144,00)'
     #~ else:
         #~ type_str = ' (0004,88)'
-    
+
     if ctype != TYPE_MIFARE_UL:
         serial_str =  tohex(serial)
     else:
         serial_str = tohex(serial[3:])  + tohex(serial[:3])
-    
-        
+
+
     return 'Mifare' + serial_str
 
 #~ print getFWVersion(self.ser)
 if __name__ == '__main__':
-    device = YH632('/dev/ttyUSB0',115200)
-    
+    device = YHY632('/dev/ttyUSB0',115200)
+
     print device.setLed("green")
     print device.beep(100)
     import time
@@ -306,27 +311,27 @@ if __name__ == '__main__':
 
     #~ device.dump('\xA0\xA1\xA2\xA3\xA4\xA5')
     #~ device.dump('\x1a\x98\x2c\x7e\x45\x9a')
-            
+
     #~ device.dump('\x8f\xd0\xa4\xf2\x56\xe9')
     #~ dump(self.ser)
 
 
     #~ device.dump()
-    
-    
+
+
     ctype,serial = device.select()
     print ctype, device.tohex(serial)
     print toMatrixIIISerial(ctype, serial)
-    
+
     #~ print device.dump('\x27\x35\xfc\x18\x18\x07')
     #~ print device.tohex(device.readSector(0,'\xff'*6,(1,2)))
-    
-    
+
+
 
     print ",".join(map(unicode,device.readSocialCardName()))
 
 
-    
+
     #~ print device.tohex(device.readSector(0,'\xA0\xA1\xA2\xA3\xA4\xA5',(0,1,2,3)))
     import time
 
