@@ -48,7 +48,7 @@ class NoCardException(Exception):
         return "No card in field"
 
 class YHY632(object):
-	""" Serial API implementation for Ehuoyan YHY632 and YHY532U readers """
+    """ Serial API implementation for Ehuoyan YHY632 and YHY532U readers """
 
     def __init__(self, port = '/dev/ttyUSB0', baudrate = 115200):
         self.port = port
